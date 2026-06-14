@@ -133,5 +133,13 @@ Each frame:
 
 - Open this folder in VS Code.
 - Install the recommended `C/C++` extension if prompted.
-- Use `Terminal > Run Build Task` to compile.
-- Use the `run` task to compile and start the executable from VS Code.
+- The build script uses `D:\MSVC\Product\VC\Auxiliary\Build\vcvars64.bat` by default.
+- Use `Terminal > Run Build Task` or `Ctrl+Shift+B` to compile.
+- Press `F5` or use the `Run solaris` launch config to build and start the executable from VS Code.
+
+## Visual Studio
+
+- Open `solaris.sln` in Visual Studio.
+- The solution includes `Release|x64` and `Debug|x64`.
+- `Release|x64` is listed first so it opens as the default configuration.
+- The project file is `solaris.vcxproj`, and it builds `main.cpp` as a Windows subsystem application.

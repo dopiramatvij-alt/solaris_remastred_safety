@@ -15,8 +15,11 @@ Debug/
 Release/
 bin/
 obj/
+build/
 x64/
 x86/
+*.vcxproj.user
+*.vcxproj.filters.user
 
 # Optional local binaries and caches
 *.cache
