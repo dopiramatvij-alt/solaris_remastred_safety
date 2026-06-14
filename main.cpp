@@ -76,7 +76,8 @@ void FillBeatBuffer(unsigned char* buffer, int size, int phase) {
     }
 }
 
-int main() {
+int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _In_ PWSTR pCmdLine, _In_ int nShowCmd) {
+    (void)hInstance; (void)hPrevInstance; (void)pCmdLine; (void)nShowCmd;
     srand(static_cast<unsigned int>(time(0)));
 
     if (MessageBoxW(NULL, L"SOLARIS: CLEANED EDITION.\n\nOnly original XOR fractal preserved.\n14 isolated phases loaded.\n\nPress [YES] to execute.", 
@@ -273,3 +274,8 @@ int main() {
 
     return 0;
 }
+
+// Provide WinMain/wWinMain so the project can link as a Windows (GUI) subsystem
+// while keeping the main() entry point. This prevents the linker error
+// "unresolved external symbol WinMain referenced in function invoke_main".
+// main is now implemented as wWinMain; remove redundant wrappers.
