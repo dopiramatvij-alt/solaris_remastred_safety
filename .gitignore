@@ -1,0 +1,27 @@
+# Build outputs
+*.exe
+*.obj
+*.pdb
+*.ilk
+*.idb
+*.ipch
+*.log
+*.tlog
+*.lastbuildstate
+
+# Visual Studio / MSBuild
+.vs/
+Debug/
+Release/
+bin/
+obj/
+x64/
+x86/
+
+# Optional local binaries and caches
+*.cache
+*.tmp
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
