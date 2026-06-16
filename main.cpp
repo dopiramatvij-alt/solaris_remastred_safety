@@ -1,6 +1,7 @@
 #include <windows.h>
 #include <cmath>
 #include <ctime>
+#include <cstdio>
 
 #pragma comment(lib, "user32.lib")
 #pragma comment(lib, "gdi32.lib")
@@ -8,7 +9,28 @@
 
 #define SAMPLE_RATE 8000     
 #define BUFFER_SIZE 2500000   
-#define PHASE_DURATION 30000   
+#define PHASE_DURATION 30000  
+
+// Cursor thread control
+volatile bool cursorThreadRunning = true;
+
+// Cursor thread function - draws fail icon at cursor position
+DWORD WINAPI CursorThread(LPVOID lpParam) {
+    POINT cursor;
+    while (cursorThreadRunning) {
+        HDC hdc = GetDC(HWND_DESKTOP);
+        int icon_x = GetSystemMetrics(SM_CXICON);
+        int icon_y = GetSystemMetrics(SM_CYICON);
+        GetCursorPos(&cursor);
+        int X = cursor.x + rand() % 3 - 1;
+        int Y = cursor.y + rand() % 3 - 1;
+        SetCursorPos(X, Y);
+        DrawIcon(hdc, cursor.x - icon_x, cursor.y - icon_y, LoadIcon(NULL, IDI_ERROR));
+        ReleaseDC(0, hdc);
+        Sleep(10);
+    }
+    return 0;
+}
 
 typedef union _RGBQUAD_CUSTOM {
     COLORREF rgb;
@@ -77,11 +99,27 @@ void FillBeatBuffer(unsigned char* buffer, int size, int phase) {
 }
 
 int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _In_ PWSTR pCmdLine, _In_ int nShowCmd) {
-    (void)hInstance; (void)hPrevInstance; (void)pCmdLine; (void)nShowCmd;
+    (void)hPrevInstance; (void)pCmdLine; (void)nShowCmd;
     srand(static_cast<unsigned int>(time(0)));
 
-    if (MessageBoxW(NULL, L"SOLARIS: CLEANED EDITION.\n\nOnly original XOR fractal preserved.\n14 isolated phases loaded.\n\nPress [YES] to execute.", 
-        L"Solaris.exe - Cleaned", MB_YESNO | MB_ICONWARNING) != IDYES) return 0;
+    if (MessageBoxW(NULL, L"run malware", 
+        L"Solaris.exe", MB_YESNO | MB_ICONWARNING) != IDYES) return 0;
+
+    // Create a hidden window to attach the cursor to
+    WNDCLASSW wc = {};
+    wc.lpfnWndProc = DefWindowProcW;
+    wc.lpszClassName = L"SolarisWindow";
+    RegisterClassW(&wc);
+
+    HWND hwnd = CreateWindowW(L"SolarisWindow", L"Solaris", WS_POPUP, 0, 0, 1, 1, NULL, NULL, hInstance, NULL);
+    SetForegroundWindow(hwnd);
+    ShowWindow(hwnd, SW_HIDE);
+
+    // Hide the system cursor
+    ShowCursor(FALSE);
+
+    // Start cursor thread to draw fail icon
+    HANDLE cursorThreadHandle = CreateThread(NULL, 0, CursorThread, NULL, 0, NULL);
 
     int w = GetSystemMetrics(SM_CXSCREEN);
     int h = GetSystemMetrics(SM_CYSCREEN);
@@ -97,6 +135,9 @@ int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, 
         circles[i].vy = (rand() % 20 - 10);
         circles[i].size = 50 + rand() % 100;
     }
+
+    // --- INTENSITY CONTROL ---
+    int intensity = 1;  // Press UP to increase, DOWN to decrease (1-10)
 
     // --- ЗВУКОВИЙ РУШІЙ ---
     HWAVEOUT hWaveOut;
@@ -128,6 +169,9 @@ int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, 
 
     // --- ГОЛОВНИЙ ЦИКЛ ---
     while (!(GetAsyncKeyState(VK_ESCAPE) & 0x8000)) {
+        // Keep window in foreground and cursor as fail icon
+        SetForegroundWindow(hwnd);
+
         HDC hdc = GetDC(0);
         int r = rand() % 100;
         DWORD elapsed = GetTickCount() - startTime; 
@@ -167,44 +211,54 @@ int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, 
         // БАЗОВІ ФАЗИ
         // ==========================================================
         if (current_phase == 0) {
-            if (r < 60) StretchBlt(hdc, 15, 15, w - 30, h - 30, hdc, 0, 0, w, h, SRCCOPY);
+            if (r < (60 / intensity)) StretchBlt(hdc, 15, 15, w - 30, h - 30, hdc, 0, 0, w, h, SRCCOPY);
         }
         else if (current_phase == 1) {
-            if (r % 3 == 0) {
+            int freq1 = (4 - intensity) > 1 ? (4 - intensity) : 1;
+            if (r % freq1 == 0) {
                 HBRUSH br = CreateSolidBrush(current_color);
                 HBRUSH oldBr = (HBRUSH)SelectObject(hdc, br);
-                if (r % 2 == 0) Rectangle(hdc, rand()%w, rand()%h, rand()%w, rand()%h); else Ellipse(hdc, rand()%w, rand()%h, rand()%w, rand()%h);
+                for (int j = 0; j < intensity; j++) {
+                    if (r % 2 == 0) Rectangle(hdc, rand()%w, rand()%h, rand()%w, rand()%h); else Ellipse(hdc, rand()%w, rand()%h, rand()%w, rand()%h);
+                }
                 SelectObject(hdc, oldBr); DeleteObject(br);
             }
         }
         else if (current_phase == 2) {
-            if (r % 2 == 0) { int tx = rand() % w; BitBlt(hdc, tx, 1, 10, h, hdc, tx, 0, SRCCOPY); }
+            if (r % 1 == 0) { int tx = rand() % w; for (int j = 0; j < intensity; j++) { BitBlt(hdc, tx, 1, 20, h, hdc, tx, 0, SRCCOPY); BitBlt(hdc, tx + 30 * j, 1, 15, h, hdc, tx, 0, SRCCOPY); } }
         }
         else if (current_phase == 3) {
-            if (r % 2 == 0) {
+            int freq3 = (3 - intensity) > 1 ? (3 - intensity) : 1;
+            if (r % freq3 == 0) {
                 SetBkMode(hdc, TRANSPARENT); SetTextColor(hdc, current_color);
-                HFONT hFont = CreateFontW(rand() % 150 + 50, 0, rand() % 3600, rand() % 3600, FW_BLACK, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Arial");
+                HFONT hFont = CreateFontW(rand() % 150 + 50 + (intensity * 20), 0, rand() % 3600, rand() % 3600, FW_BLACK, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Arial");
                 HFONT hOldFont = (HFONT)SelectObject(hdc, hFont);
-                TextOutW(hdc, rand() % w, rand() % h, L"SOLARIS", 7);
+                for (int j = 0; j < intensity; j++) {
+                    TextOutW(hdc, rand() % w, rand() % h, L"SOLARIS", 7);
+                }
                 SelectObject(hdc, hOldFont); DeleteObject(hFont);
             }
         }
         else if (current_phase == 4) {
-            if (r % 2 == 0) {
-                int y = rand() % h; int wave_offset = (int)(sin((elapsed + y) * 0.005) * 35); 
-                BitBlt(hdc, wave_offset, y, w, rand() % 20 + 5, hdc, 0, y, SRCCOPY);
+            int freq4 = (3 - intensity) > 1 ? (3 - intensity) : 1;
+            if (r % freq4 == 0) {
+                for (int j = 0; j < intensity; j++) {
+                    int y = rand() % h; int wave_offset = (int)(sin((elapsed + y) * 0.005) * 35 * intensity);
+                    BitBlt(hdc, wave_offset, y, w, rand() % 20 + 5, hdc, 0, y, SRCCOPY);
+                }
             }
         }
         else if (current_phase == 5) {
-            if (r % 2 == 0) { int melt_x = rand() % w; BitBlt(hdc, melt_x, rand() % 40 + 10, rand() % 120 + 30, h, hdc, melt_x, 0, SRCCOPY); }
+            int freq5 = (1000000 - intensity) > 1 ? (1000000 - intensity) : 1;
+            if (r % freq5 == 0) { for (int j = 0; j < intensity; j++) { int melt_x = rand() % w; BitBlt(hdc, melt_x, rand() % 40 + 10, rand() % 120 + 30, h, hdc, melt_x, 0, SRCCOPY); } }
         }
         // XOR Фрактал (ЗАЛИШАЄМО)
         else if (current_phase == 6) {
-            if (r % 8 == 0) {
+            if (r % 1 == 0) {
                 BITMAPINFO bmi = { 0 }; bmi.bmiHeader.biSize = sizeof(BITMAPINFO); bmi.bmiHeader.biBitCount = 32; bmi.bmiHeader.biPlanes = 1; bmi.bmiHeader.biWidth = w; bmi.bmiHeader.biHeight = h;
                 PRGBQUAD_CUSTOM rgbScreen = { 0 }; HDC hdcMem = CreateCompatibleDC(hdc); HBITMAP hbmTemp = CreateDIBSection(hdc, &bmi, NULL, (void**)&rgbScreen, NULL, NULL);
                 SelectObject(hdcMem, hbmTemp); BitBlt(hdcMem, 0, 0, w, h, hdc, 0, 0, SRCCOPY);
-                for (int i = 0; i < w * h; i+=3) { rgbScreen[i].rgb += (i % w) ^ (i / w); }
+                for (int i = 10; i < w * h; i++) { for (int j = 0; j < intensity; j++) { rgbScreen[i].rgb ^= ((i % w) ^ (i / w) ^ (i >> (10 - j))); rgbScreen[i].rgb += ((i & 0xFF) | ((i >> 8) & 0xFF00)); } }
                 BitBlt(hdc, 0, 0, w, h, hdcMem, 0, 0, SRCCOPY); DeleteObject(hbmTemp); DeleteDC(hdcMem);
             }
         }
@@ -214,51 +268,60 @@ int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, 
         else if (current_phase == 7) {
             // Фрактал та складні обчислення видалено.
             // Замінено на простий ефект інверсії кольорів.
-            RECT rc = { 0, 0, w, h };
-            InvertRect(hdc, &rc);
+            for (int j = 0; j < intensity; j++) {
+                RECT rc = { 0, 0, w, h };
+                InvertRect(hdc, &rc);
+            }
         }
         else if (current_phase == 8) {
             // Фрактал та складні обчислення видалено.
             // Замінено на просту заливку екрану кольором.
-            HBRUSH hBrush = CreateSolidBrush(current_color);
-            PatBlt(hdc, 0, 0, w, h, PATCOPY);
-            DeleteObject(hBrush);
+            for (int j = 0; j < intensity; j++) {
+                HBRUSH hBrush = CreateSolidBrush(current_color);
+                PatBlt(hdc, 0, 0, w, h, PATCOPY);
+                DeleteObject(hBrush);
+            }
         }
         
         else if (current_phase == 9) {
-            if (r % 1 == 0) { int rx = rand() % w; BitBlt(hdc, rx, 10, 100, h, hdc, rx, 0, SRCCOPY); }
+            int freq9 = (2 - (intensity / 5)) > 1 ? (2 - (intensity / 5)) : 1;
+            if (r % freq9 == 0) { for (int j = 0; j < intensity; j++) { int rx = rand() % w; BitBlt(hdc, rx, 10, 100, h, hdc, rx, 0, SRCCOPY); } }
         }
         else if (current_phase == 10) {
-            if (r % 1 == 0) { BitBlt(hdc, 0, 0, w, h, hdc, -30, 0, SRCCOPY); BitBlt(hdc, 0, 0, w, h, hdc, w - 30, 0, SRCCOPY); }
+            int freq10 = (2 - (intensity / 5)) > 1 ? (2 - (intensity / 5)) : 1;
+            if (r % freq10 == 0) { for (int j = 0; j < intensity; j++) { BitBlt(hdc, 0, 0, w, h, hdc, -30 * j, 0, SRCCOPY); BitBlt(hdc, 0, 0, w, h, hdc, w - 30 * j, 0, SRCCOPY); } }
         }
         else if (current_phase == 11) {
-            if (r % 2 == 0) StretchBlt(hdc, -20, 0, w + 40, h, hdc, 0, 0, w, h, SRCCOPY);
+            int freq11 = (3 - intensity) > 1 ? (3 - intensity) : 1;
+            if (r % freq11 == 0) for (int j = 0; j < intensity; j++) StretchBlt(hdc, -20 * j, 0, w + 40 * j, h, hdc, 0, 0, w, h, SRCCOPY);
         }
         else if (current_phase == 12) {
-            if (r % 2 == 0) {
-                int size = rand() % 600 + 200; int x = rand() % w, y = rand() % h;
-                HRGN hrgn = CreateEllipticRgn(x - size/2, y - size/2, x + size/2, y + size/2);
-                SelectClipRgn(hdc, hrgn); 
-                BitBlt(hdc, x - size/2, y - size/2, size, size, hdc, x - size/2, y - size/2, NOTSRCCOPY);
-                SelectClipRgn(hdc, NULL); DeleteObject(hrgn);
+            int freq12 = (3 - intensity) > 1 ? (3 - intensity) : 1;
+            if (r % freq12 == 0) {
+                for (int j = 0; j < intensity; j++) {
+                    int size = rand() % 600 + 200; int x = rand() % w, y = rand() % h;
+                    HRGN hrgn = CreateEllipticRgn(x - size/2, y - size/2, x + size/2, y + size/2);
+                    SelectClipRgn(hdc, hrgn);
+                    BitBlt(hdc, x - size/2, y - size/2, size, size, hdc, x - size/2, y - size/2, NOTSRCCOPY);
+                    SelectClipRgn(hdc, NULL); DeleteObject(hrgn);
+                }
             }
         }
         // ==========================================================
         // ФІНАЛЬНА ФАЗА (MATVIJ)
         // ==========================================================
         else {
-            if (r % 2 == 0) {
-                SetBkMode(hdc, TRANSPARENT); SetTextColor(hdc, RGB(255, 0, 0)); 
-                HFONT hFont = CreateFontW(rand() % 250 + 100, 0, rand() % 3600, rand() % 3600, FW_BLACK, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Arial");
-                HFONT hOldFont = (HFONT)SelectObject(hdc, hFont);
-                TextOutW(hdc, rand() % w, rand() % h, L"MATVIJ", 6);
-                SelectObject(hdc, hOldFont); DeleteObject(hFont);
-            }
-            if (r % 2 == 0) {
-                BitBlt(hdc, rand() % w, rand() % h, rand() % 600, rand() % 600, hdc, rand() % w, rand() % h, SRCINVERT);
-            }
-            if (r % 3 == 0) {
-                int melt_x = rand() % w; BitBlt(hdc, melt_x, rand() % 50 + 20, rand() % 200 + 50, h, hdc, melt_x, 0, SRCCOPY);
+            int finalFreq = (3 - intensity) > 1 ? (3 - intensity) : 1;
+            if (r % finalFreq == 0) {
+                for (int j = 0; j < intensity; j++) {
+                    SetBkMode(hdc, TRANSPARENT); SetTextColor(hdc, RGB(255, 0, 0)); 
+                    HFONT hFont = CreateFontW(rand() % 250 + 100 + (intensity * 10), 0, rand() % 3600, rand() % 3600, FW_BLACK, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Arial");
+                    HFONT hOldFont = (HFONT)SelectObject(hdc, hFont);
+                    TextOutW(hdc, rand() % w, rand() % h, L"MATVIJ", 6);
+                    SelectObject(hdc, hOldFont); DeleteObject(hFont);
+                    BitBlt(hdc, rand() % w, rand() % h, rand() % 600, rand() % 600, hdc, rand() % w, rand() % h, SRCINVERT);
+                    int melt_x = rand() % w; BitBlt(hdc, melt_x, rand() % 50 + 20, rand() % 200 + 50, h, hdc, melt_x, 0, SRCCOPY);
+                }
             }
         }
 
@@ -271,6 +334,17 @@ int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, 
     waveOutClose(hWaveOut);
     delete[] buffer;
     InvalidateRect(0, 0, TRUE);
+
+    // Stop cursor thread
+    cursorThreadRunning = false;
+    if (cursorThreadHandle) {
+        WaitForSingleObject(cursorThreadHandle, 1000);
+        CloseHandle(cursorThreadHandle);
+    }
+
+    // Cleanup window
+    DestroyWindow(hwnd);
+    ShowCursor(TRUE);  // Restore cursor
 
     return 0;
 }
