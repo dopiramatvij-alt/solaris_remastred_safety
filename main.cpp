@@ -1,4 +1,5 @@
 #include <windows.h>
+#define _USE_MATH_DEFINES
 #include <cmath>
 #include <ctime>
 #include <cstdio>
@@ -13,6 +14,9 @@
 
 // Cursor thread control
 volatile bool cursorThreadRunning = true;
+
+// Sine wave angle accumulator
+double sineAngle = 0.0;
 
 // Cursor thread function - draws fail icon at cursor position
 DWORD WINAPI CursorThread(LPVOID lpParam) {
@@ -41,10 +45,131 @@ struct BouncingCircle {
     int x, y, vx, vy, size;
 };
 
+static int shaderHue = 0;
+
+static COLORREF NextShaderColor(int length) {
+    (void)length;
+    int hue = shaderHue++ % 1536;
+    int segment = hue / 256;
+    int offset = hue % 256;
+
+    switch (segment) {
+        case 0: return RGB(255, offset, 0);
+        case 1: return RGB(255 - offset, 255, 0);
+        case 2: return RGB(0, 255, offset);
+        case 3: return RGB(0, 255 - offset, 255);
+        case 4: return RGB(offset, 0, 255);
+        default: return RGB(255, 0, 255 - offset);
+    }
+}
+
+static void ApplyPhase15Shader(HDC hdc, int w, int h, int intensity) {
+    HDC memoryDc = CreateCompatibleDC(hdc);
+    HBITMAP snapshot = CreateCompatibleBitmap(hdc, w, h);
+    HBITMAP previousBitmap = (HBITMAP)SelectObject(memoryDc, snapshot);
+    BitBlt(memoryDc, 0, 0, w, h, hdc, 0, 0, SRCCOPY);
+
+    const int pixelCount = w * h;
+    RGBQUAD* pixelData = (RGBQUAD*)VirtualAlloc(0, (pixelCount + w) * sizeof(RGBQUAD), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    if (pixelData != nullptr) {
+        GetBitmapBits(snapshot, pixelCount * sizeof(RGBQUAD), pixelData);
+
+        for (int pass = 0; pass < intensity; ++pass) {
+            for (int index = 0; index < pixelCount; ++index) {
+                COLORREF shaderColor = NextShaderColor(239);
+                pixelData[index].rgbRed = GetRValue(shaderColor);
+                pixelData[index].rgbGreen = GetGValue(shaderColor);
+                pixelData[index].rgbBlue = GetBValue(shaderColor);
+            }
+        }
+
+        SetBitmapBits(snapshot, pixelCount * sizeof(RGBQUAD), pixelData);
+        VirtualFree(pixelData, 0, MEM_RELEASE);
+    }
+
+    BitBlt(hdc, 0, 0, w, h, memoryDc, 0, 0, SRCCOPY);
+    SelectObject(memoryDc, previousBitmap);
+    DeleteObject(snapshot);
+    DeleteDC(memoryDc);
+}
+
+static void ApplyBetterRgbQuad(HDC hdc, int w, int h, int intensity) {
+    HDC memoryDc = CreateCompatibleDC(hdc);
+    HBITMAP snapshot = CreateCompatibleBitmap(hdc, w, h);
+    HBITMAP previousBitmap = (HBITMAP)SelectObject(memoryDc, snapshot);
+    BitBlt(memoryDc, 0, 0, w, h, hdc, 0, 0, SRCCOPY);
+
+    const int pixelCount = w * h;
+    RGBQUAD* pixelData = (RGBQUAD*)VirtualAlloc(0, (pixelCount + w) * sizeof(RGBQUAD), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    if (pixelData != nullptr) {
+        GetBitmapBits(snapshot, pixelCount * sizeof(RGBQUAD), pixelData);
+
+        for (int pass = 0; pass < intensity; ++pass) {
+            for (int index = 0; index < pixelCount; ++index) {
+                int x = index % w;
+                int y = index / w;
+                int t = (y ^ y) | x;
+                COLORREF color = static_cast<COLORREF>(x & y & t);
+                pixelData[index].rgbBlue = GetBValue(color);
+                pixelData[index].rgbGreen = GetGValue(color);
+                pixelData[index].rgbRed = GetRValue(color);
+            }
+        }
+
+        SetBitmapBits(snapshot, pixelCount * sizeof(RGBQUAD), pixelData);
+        VirtualFree(pixelData, 0, MEM_RELEASE);
+    }
+
+    BitBlt(hdc, 0, 0, w, h, memoryDc, 0, 0, SRCCOPY);
+    SelectObject(memoryDc, previousBitmap);
+    DeleteObject(snapshot);
+    DeleteDC(memoryDc);
+}
+
+static void ApplyMythlasShader(HDC hdc, int w, int h, int intensity) {
+    HDC memoryDc = CreateCompatibleDC(hdc);
+    HBITMAP snapshot = CreateCompatibleBitmap(hdc, w, h);
+    HBITMAP previousBitmap = (HBITMAP)SelectObject(memoryDc, snapshot);
+    BitBlt(memoryDc, 0, 0, w, h, hdc, 0, 0, SRCCOPY);
+
+    const int pixelCount = w * h;
+    RGBQUAD* pixelData = (RGBQUAD*)VirtualAlloc(0, (pixelCount + w) * sizeof(RGBQUAD), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    if (pixelData != nullptr) {
+        GetBitmapBits(snapshot, pixelCount * sizeof(RGBQUAD), pixelData);
+
+        int offset = 0;
+        BYTE byteNoise = 0;
+        if ((GetTickCount() % 60000) > 30000) {
+            byteNoise = static_cast<BYTE>(rand() & 0xFF);
+        }
+
+        for (int pass = 0; pass < intensity; ++pass) {
+            for (int index = 0; index < pixelCount; ++index) {
+                if (h != 0 && index % h == 0 && (rand() % 100 == 0)) {
+                    offset = rand() % 50;
+                }
+
+                BYTE* pixelBytes = reinterpret_cast<BYTE*>(&pixelData[index]);
+                int channel = offset % 3;
+                int sourceChannel = index % 3;
+                pixelBytes[channel] = static_cast<BYTE>(pixelBytes[channel] + (pixelBytes[sourceChannel] ^ byteNoise));
+            }
+        }
+
+        SetBitmapBits(snapshot, pixelCount * sizeof(RGBQUAD), pixelData);
+        VirtualFree(pixelData, 0, MEM_RELEASE);
+    }
+
+    BitBlt(hdc, 0, 0, w, h, memoryDc, 0, 0, SRCCOPY);
+    SelectObject(memoryDc, previousBitmap);
+    DeleteObject(snapshot);
+    DeleteDC(memoryDc);
+}
+
 void FillBeatBuffer(unsigned char* buffer, int size, int phase) {
     for (int t = 0; t < size; t++) {
         int value;
-        switch (phase % 16) {
+        switch (phase % 20) {
             case 0:
                 value = 5*t&t>>7|3*t&4*t>>10;
                 break;
@@ -89,6 +214,26 @@ void FillBeatBuffer(unsigned char* buffer, int size, int phase) {
                 break;
             case 14:
                 value = t*(t^t>>20*(t>>11));
+                break;
+            case 15:
+                // Phase 14: Sine Wave - wavy, melodic synth
+                value = t ^ t >> 4 ^ (t >> 11 + (t >> 16) % 3) % 16 * t ^ 3 * t;
+                break;
+            case 16:
+                // Phase 15: RGB Train - fast, pulsing beat
+                value = 10 * (t >> 7 | t | t >> 6) + 4 * (t & t >> 13 | t >> 6);
+                break;
+            case 17:
+                // Phase 16: RGB Shader - chaotic, glitchy decay
+                value = 10 * (t >> 6 | t | t >> (t >> 16)) + (7 & t >> 11);
+                break;
+            case 18:
+                // Phase 17: GDI Hell - heavy, distorted bass
+                value = (t * (t >> 8 | t >> 9) & 255) ^ ((t >> 5) & (t >> 3)) | (t >> 11) * (t & 0xFF);
+                break;
+            case 19:
+                // Final phase: MATVIJ - epic, chaotic finale
+                value = t * (t ^ t >> 20 * (t >> 11));
                 break;
             default:
                 value = t*(t>>9|t>>13)&16;
@@ -249,17 +394,20 @@ int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, 
             }
         }
         else if (current_phase == 5) {
-            int freq5 = (1000000 - intensity) > 1 ? (1000000 - intensity) : 1;
+            int freq5 = (10 - intensity) > 1 ? (10 - intensity) : 1;
             if (r % freq5 == 0) { for (int j = 0; j < intensity; j++) { int melt_x = rand() % w; BitBlt(hdc, melt_x, rand() % 40 + 10, rand() % 120 + 30, h, hdc, melt_x, 0, SRCCOPY); } }
         }
         // XOR Фрактал (ЗАЛИШАЄМО)
         else if (current_phase == 6) {
-            if (r % 1 == 0) {
-                BITMAPINFO bmi = { 0 }; bmi.bmiHeader.biSize = sizeof(BITMAPINFO); bmi.bmiHeader.biBitCount = 32; bmi.bmiHeader.biPlanes = 1; bmi.bmiHeader.biWidth = w; bmi.bmiHeader.biHeight = h;
-                PRGBQUAD_CUSTOM rgbScreen = { 0 }; HDC hdcMem = CreateCompatibleDC(hdc); HBITMAP hbmTemp = CreateDIBSection(hdc, &bmi, NULL, (void**)&rgbScreen, NULL, NULL);
-                SelectObject(hdcMem, hbmTemp); BitBlt(hdcMem, 0, 0, w, h, hdc, 0, 0, SRCCOPY);
-                for (int i = 10; i < w * h; i++) { for (int j = 0; j < intensity; j++) { rgbScreen[i].rgb ^= ((i % w) ^ (i / w) ^ (i >> (10 - j))); rgbScreen[i].rgb += ((i & 0xFF) | ((i >> 8) & 0xFF00)); } }
-                BitBlt(hdc, 0, 0, w, h, hdcMem, 0, 0, SRCCOPY); DeleteObject(hbmTemp); DeleteDC(hdcMem);
+            int freq6 = (2 - (intensity / 100)) > 1 ? (2 - (intensity / 100)) : 1;
+            if (r % freq6 == 0) {
+                for (int k = 0; k < intensity; k++) {
+                    BITMAPINFO bmi = { 0 }; bmi.bmiHeader.biSize = sizeof(BITMAPINFO); bmi.bmiHeader.biBitCount = 32; bmi.bmiHeader.biPlanes = 1; bmi.bmiHeader.biWidth = w; bmi.bmiHeader.biHeight = h;
+                    PRGBQUAD_CUSTOM rgbScreen = { 0 }; HDC hdcMem = CreateCompatibleDC(hdc); HBITMAP hbmTemp = CreateDIBSection(hdc, &bmi, NULL, (void**)&rgbScreen, NULL, NULL);
+                    SelectObject(hdcMem, hbmTemp); BitBlt(hdcMem, 0, 0, w, h, hdc, 0, 0, SRCCOPY);
+                    for (int i = 0; i < w * h; i++) { for (int j = 0; j < intensity; j++) { rgbScreen[i].rgb ^= ((i % w) ^ (i / w) ^ (i >> (10 - j))); rgbScreen[i].rgb += ((i & 0xFF) | ((i >> 8) & 0xFF00)); } }
+                    BitBlt(hdc, 0, 0, w, h, hdcMem, 0, 0, SRCCOPY); DeleteObject(hbmTemp); DeleteDC(hdcMem);
+                }
             }
         }
         // ==========================================================
@@ -288,41 +436,111 @@ int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, 
             if (r % freq9 == 0) { for (int j = 0; j < intensity; j++) { int rx = rand() % w; BitBlt(hdc, rx, 10, 100, h, hdc, rx, 0, SRCCOPY); } }
         }
         else if (current_phase == 10) {
-            int freq10 = (2 - (intensity / 5)) > 1 ? (2 - (intensity / 5)) : 1;
-            if (r % freq10 == 0) { for (int j = 0; j < intensity; j++) { BitBlt(hdc, 0, 0, w, h, hdc, -30 * j, 0, SRCCOPY); BitBlt(hdc, 0, 0, w, h, hdc, w - 30 * j, 0, SRCCOPY); } }
+            // Phase 10: RGB Train - horizontal scroll effect
+            HBRUSH brush = CreateSolidBrush(RGB(rand() % 255, rand() % 255, rand() % 255));
+            SelectObject(hdc, brush);
+            for (int j = 0; j < intensity; j++) {
+                BitBlt(hdc, 0, 0, w, h, hdc, -15 - 15*j, 0, SRCCOPY);
+                BitBlt(hdc, 0, 0, w, h, hdc, w - 15 - 15*j, 0, SRCCOPY);
+            }
+            DeleteObject(brush);
         }
         else if (current_phase == 11) {
-            int freq11 = (3 - intensity) > 1 ? (3 - intensity) : 1;
-            if (r % freq11 == 0) for (int j = 0; j < intensity; j++) StretchBlt(hdc, -20 * j, 0, w + 40 * j, h, hdc, 0, 0, w, h, SRCCOPY);
+            // Phase 11: Stretch/Zoom distortion - make it visible
+            HDC memdc = CreateCompatibleDC(hdc);
+            HBITMAP snapshot = CreateCompatibleBitmap(hdc, w, h);
+            HBITMAP oldBmp = (HBITMAP)SelectObject(memdc, snapshot);
+            BitBlt(memdc, 0, 0, w, h, hdc, 0, 0, SRCCOPY);
+
+            for (int j = 1; j <= intensity; j++) {
+                int zoom = 20 * j;
+                StretchBlt(hdc, -zoom, -zoom, w + zoom * 2, h + zoom * 2, memdc, 0, 0, w, h, SRCCOPY);
+                StretchBlt(hdc, zoom / 2, zoom / 2, w - zoom, h - zoom, memdc, 0, 0, w, h, NOTSRCCOPY);
+            }
+
+            SelectObject(memdc, oldBmp);
+            DeleteObject(snapshot);
+            DeleteDC(memdc);
         }
         else if (current_phase == 12) {
-            int freq12 = (3 - intensity) > 1 ? (3 - intensity) : 1;
-            if (r % freq12 == 0) {
-                for (int j = 0; j < intensity; j++) {
-                    int size = rand() % 600 + 200; int x = rand() % w, y = rand() % h;
-                    HRGN hrgn = CreateEllipticRgn(x - size/2, y - size/2, x + size/2, y + size/2);
-                    SelectClipRgn(hdc, hrgn);
-                    BitBlt(hdc, x - size/2, y - size/2, size, size, hdc, x - size/2, y - size/2, NOTSRCCOPY);
-                    SelectClipRgn(hdc, NULL); DeleteObject(hrgn);
-                }
+            // Phase 12: Circular inversion effect
+            for (int j = 0; j < intensity; j++) {
+                int size = rand() % 400 + 150; 
+                int x = rand() % w, y = rand() % h;
+                HRGN hrgn = CreateEllipticRgn(x - size/2, y - size/2, x + size/2, y + size/2);
+                SelectClipRgn(hdc, hrgn);
+                BitBlt(hdc, x - size/2, y - size/2, size, size, hdc, x - size/2, y - size/2, NOTSRCCOPY);
+                SelectClipRgn(hdc, NULL); 
+                DeleteObject(hrgn);
             }
         }
-        // ==========================================================
-        // ФІНАЛЬНА ФАЗА (MATVIJ)
-        // ==========================================================
-        else {
-            int finalFreq = (3 - intensity) > 1 ? (3 - intensity) : 1;
-            if (r % finalFreq == 0) {
-                for (int j = 0; j < intensity; j++) {
-                    SetBkMode(hdc, TRANSPARENT); SetTextColor(hdc, RGB(255, 0, 0)); 
-                    HFONT hFont = CreateFontW(rand() % 250 + 100 + (intensity * 10), 0, rand() % 3600, rand() % 3600, FW_BLACK, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Arial");
-                    HFONT hOldFont = (HFONT)SelectObject(hdc, hFont);
-                    TextOutW(hdc, rand() % w, rand() % h, L"MATVIJ", 6);
-                    SelectObject(hdc, hOldFont); DeleteObject(hFont);
-                    BitBlt(hdc, rand() % w, rand() % h, rand() % 600, rand() % 600, hdc, rand() % w, rand() % h, SRCINVERT);
-                    int melt_x = rand() % w; BitBlt(hdc, melt_x, rand() % 50 + 20, rand() % 200 + 50, h, hdc, melt_x, 0, SRCCOPY);
-                }
+        else if (current_phase == 13) {
+            // Phase 13: Transition - Complex text and effects
+            SetBkMode(hdc, TRANSPARENT);
+            SetTextColor(hdc, RGB(255, 255, 0));
+            HFONT hFont = CreateFontW(rand() % 150 + 80, 0, rand() % 3600, rand() % 3600, FW_BLACK, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Arial");
+            HFONT hOldFont = (HFONT)SelectObject(hdc, hFont);
+            for (int j = 0; j < intensity; j++) {
+                TextOutW(hdc, rand() % w, rand() % h, L"", 8);
+                BitBlt(hdc, rand() % w, rand() % h, rand() % 400 + 100, rand() % 400 + 100, hdc, rand() % w, rand() % h, SRCINVERT);
             }
+            SelectObject(hdc, hOldFont);
+            DeleteObject(hFont);
+        }
+        // ==========================================================
+        // NEW EFFECTS (PHASES 14-17)
+        // ==========================================================
+        else if (current_phase == 14) {
+            // Phase 14: mythlasshader-style full-screen RGB byte distortion
+            ApplyMythlasShader(hdc, w, h, intensity);
+        }
+        else if (current_phase == 15) {
+            // Phase 15: HSL shader-inspired full-screen color shift
+            ApplyPhase15Shader(hdc, w, h, intensity);
+        }
+        else if (current_phase == 16) {
+            // Phase 16: RGB Shader (Pixel Byte Reduction) - simplified
+            HDC memdc = CreateCompatibleDC(hdc);
+            HBITMAP snapshot = CreateCompatibleBitmap(hdc, w, h);
+            HBITMAP oldBmp = (HBITMAP)SelectObject(memdc, snapshot);
+            BitBlt(memdc, 0, 0, w, h, hdc, 0, 0, SRCCOPY);
+
+            for (int j = 0; j < intensity; j++) {
+                HBRUSH br = CreateSolidBrush(RGB(rand() % 255, rand() % 255, rand() % 255));
+                HBRUSH oldBrush = (HBRUSH)SelectObject(hdc, br);
+                int y_line = rand() % h;
+                int shift = (rand() % 101) - 50;
+                BitBlt(hdc, 0, y_line, w, 2, memdc, shift, y_line, SRCCOPY);
+                int band_y = y_line + (j * 5);
+                if (band_y > h - 3) band_y = h - 3;
+                PatBlt(hdc, 0, band_y, w, 3, PATINVERT);
+                SelectObject(hdc, oldBrush);
+                DeleteObject(br);
+            }
+
+            SelectObject(memdc, oldBmp);
+            DeleteObject(snapshot);
+            DeleteDC(memdc);
+        }
+        else if (current_phase == 17) {
+            // Phase 17: better RGBQUAD shader
+            ApplyBetterRgbQuad(hdc, w, h, intensity);
+        }
+        // ==========================================================
+        // ФІНАЛЬНА ФАЗА (MATVIJ) - ONLY at phase 18 and beyond
+        // ==========================================================
+        else if (current_phase >= 18) {
+            // MATVIJ only plays once at the very end
+            SetBkMode(hdc, TRANSPARENT); 
+            SetTextColor(hdc, RGB(255, 0, 0)); 
+            HFONT hFont = CreateFontW(rand() % 250 + 100 + (intensity * 10), 0, rand() % 3600, rand() % 3600, FW_BLACK, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Arial");
+            HFONT hOldFont = (HFONT)SelectObject(hdc, hFont);
+            TextOutW(hdc, rand() % w, rand() % h, L"MATVIJ", 6);
+            SelectObject(hdc, hOldFont); 
+            DeleteObject(hFont);
+            BitBlt(hdc, rand() % w, rand() % h, rand() % 600, rand() % 600, hdc, rand() % w, rand() % h, SRCINVERT);
+            int melt_x = rand() % w; 
+            BitBlt(hdc, melt_x, rand() % 50 + 20, rand() % 200 + 50, h, hdc, melt_x, 0, SRCCOPY);
         }
 
         ReleaseDC(0, hdc);
